@@ -34,7 +34,6 @@ def getTokenTree(strFormula):
         tokList = t[0]
         while (len(tokList) > 1):
             tokList = tokList[:-2] + [TokenNode(tokList[-2], [tokList[-1]])]
-            print(tokList)
         return tokList
 
     def binOpParse(t):
@@ -42,7 +41,6 @@ def getTokenTree(strFormula):
         tokList = t[0]
         while len(tokList) > 1:
             tokList = [TokenNode(tokList[1], [tokList[0], tokList[2]])] + tokList[3:]
-            print(tokList)
         return tokList
 
     integer = ppc.integer.set_parse_action(lambda t: TokenNode("INT", [], t[0]))
@@ -68,17 +66,15 @@ def getTokenTree(strFormula):
     def quantOpParse(t):
         # the quantifiers need special treatment
         tokList = t[0]
-        print(tokList)
         while (len(tokList) > 1):
             tokList[-2].children.append(tokList[-1])
             tokList = tokList[:-1]
-            print(tokList)
         return tokList
 
     comparison = (term + oneOf("< > <= >= == !=") + term).set_parse_action(lambda t: TokenNode(t[1], [t[0], t[2]]))
     divisible = (integer + Literal("|") + term).set_parse_action(lambda t: TokenNode("DIV", [t[0], t[2]]))
     top = Literal("TOP").set_parse_action(lambda: TokenNode("TOP", []))
-    bottom = Literal("BOTTOM").set_parse_action(lambda: TokenNode("BOTTOM", []))
+    bottom = Literal("BOT").set_parse_action(lambda: TokenNode("BOTTOM", []))
 
     atomicFormula = comparison | divisible | top | bottom
 
@@ -103,6 +99,6 @@ def getTokenTree(strFormula):
 
     try:
         tokenTree = formulaParser.parseString(strFormula, parseAll = True)
-        return tokenTree
+        return tokenTree[0]
     except Exception as e:
         raise Exception("Cannot Parse Formula: " + str(e))
