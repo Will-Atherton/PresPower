@@ -37,14 +37,20 @@ def getTokenTree(strFormula):
         return tokList
 
     def binOpParse(t):
-        # all binary operators are left-associative
+        # most binary operators are left-associative
         tokList = t[0]
         while len(tokList) > 1:
             tokList = [TokenNode(tokList[1], [tokList[0], tokList[2]])] + tokList[3:]
         return tokList
+    
+    def binOpParseRight(t):
+        # for the right-associative binary operators
+        tokList = t[0]
+        while (len(tokList) > 1):
+            tokList = tokList[:-3] + [TokenNode(tokList[-2], [tokList[-3], tokList[-1]])]
 
     integer = ppc.integer.set_parse_action(lambda t: TokenNode("INT", [], t[0]))
-    variable = Word(alphas, exact=1).set_parse_action(lambda t: TokenNode("VAR", [], t[0]))
+    variable = Word(alphas.lower(),min=1).set_parse_action(lambda t: TokenNode("VAR", [], t[0]))
 
     atomicTerm = integer | variable
 
@@ -63,8 +69,8 @@ def getTokenTree(strFormula):
         ]
     )
 
-    def quantOpParse(t):
-        # the quantifiers need special treatment
+    def quantNotOpParse(t):
+        # the quantifiers / not need special treatment, as they are already in TokenNode objects
         tokList = t[0]
         while (len(tokList) > 1):
             tokList[-2].children.append(tokList[-1])
@@ -82,18 +88,18 @@ def getTokenTree(strFormula):
     orOp = Literal("OR")
     implOp = Literal("->")
     doubleImplOp = Literal("<->")
-    notOp = Literal("¬")
+    notOp = Literal("¬").set_parse_action(lambda t: TokenNode("¬", []))
     quantOp = (oneOf("EXISTS FORALL") + variable).set_parse_action(lambda t: TokenNode(t[0], [], t[1]))
+    quantNotOp = notOp | quantOp
 
     formulaParser = infixNotation(
         atomicFormula,
         [
-            (notOp, 1, opAssoc.RIGHT, unOpParse),
+            (quantNotOp, 1, opAssoc.RIGHT, quantNotOpParse),
             (orOp, 2, opAssoc.LEFT, binOpParse),
             (andOp, 2, opAssoc.LEFT, binOpParse),
-            (quantOp, 1, opAssoc.RIGHT, quantOpParse),
-            (implOp, 2, opAssoc.LEFT, binOpParse),
-            (doubleImplOp, 2, opAssoc.LEFT, binOpParse),
+            (implOp, 2, opAssoc.RIGHT, binOpParseRight),
+            (doubleImplOp, 2, opAssoc.RIGHT, binOpParseRight),
         ]
     )
 
