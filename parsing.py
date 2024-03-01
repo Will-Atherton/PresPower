@@ -48,6 +48,7 @@ def getTokenTree(strFormula):
         tokList = t[0]
         while (len(tokList) > 1):
             tokList = tokList[:-3] + [TokenNode(tokList[-2], [tokList[-3], tokList[-1]])]
+        return tokList
 
     integer = ppc.integer.set_parse_action(lambda t: TokenNode("INT", [], t[0]))
     variable = Word(alphas.lower(),min=1).set_parse_action(lambda t: TokenNode("VAR", [], t[0]))

@@ -1,22 +1,61 @@
 from variable import Variable
+import math
 
 class TreeNode:
-    def __init__(self, type, parent = None, children = []):
+    def __init__(self, type, parent = None, children = None):
         self.type = type
-        self.children = children
+
+        # python doesn't like empty list defaults for class instantiation
+        if children == None:
+            self.children = []
+        else:
+            self.children = children
+
         self.parent = parent
 
-    def clone(self, parent, varDict = {}):
+    def clone(self, parent = None, varDict = {}, varReplace = None, formReplace = None):
+        if formReplace != None:
+            # replace if equivalent to a formula here
+            for form in formReplace.keys():
+                if self.equiv(form):
+                    # replace with replacement
+                    node = formReplace[form]
+                    node.parent = parent
+                    return (node, varDict)
+        
         node = TreeNode(self.type, parent)
         clonedChildren = []
         for child in self.children:
-            clonedChildren.append(child.clone(node, varDict))
+            (childClone, varDict) = child.clone(node, varDict, varReplace, formReplace)
+            clonedChildren.append(childClone)
         node.children = clonedChildren
-        return node
+        return (node, varDict)
+    
+    def equiv(self, otherNode):
+        if self.type != otherNode.type:
+            return False
+        
+        if len(self.children) != len(otherNode.children):
+            return False
+
+        for i in range(len(self.children)):
+            if not self.children[i].equiv(otherNode.children[i]):
+                return False
+        
+        return True
     
     def delete(self):
         for child in self.children:
             child.delete()
+
+    def remove(self, node):
+        if self == node:
+            # needs to have exactly on child
+            assert(len(self.children) == 1)
+            self.replace(self.children[0])
+        else:
+            for child in self.children:
+                child.remove(node)
 
     def replaceChild(self, oldChild, newChild):
         for i in range(len(self.children)):
@@ -31,13 +70,51 @@ class TreeNode:
             newNode.parent = None
         else:
             self.parent.replaceChild(self, newNode)
+            newNode.parent = self.parent
+
+    def getLowestQuant(self):
+        if self.type != "EXISTS" and self.type != "FORALL":
+            return None
+        
+        if self.children[0].type != "EXISTS" and self.children[0].type != "FORALL":
+            return self
+        
+        return self.children[0].getLowestQuant()
+    
+    def getNonSimple(self):
+        nonSimples = []
+        for child in self.children:
+            nonSimples += child.getNonSimple()
+
+        return nonSimples
+    
+    def getLinAndMod(self):
+        maxLin = 2
+        mod = 1
+        for child in self.children:
+            (cMaxLin, cMod) = child.getLinAndMod()
+            if cMaxLin > maxLin:
+                maxLin = cMaxLin
+            
+            mod = math.lcm(mod, cMod)
+        
+        return (maxLin, mod)
+    
+    def setVariablePointers(self, vList):
+        for child in self.children:
+            child.setVariablePointers(vList)
+
+    def simplifyRec(self):
+        for child in self.children:
+            child.simplifyRec()
+
+        return self.simplify()
 
     def simplify(self):
         # Boolean Operators
         if self.type == "NOT":
             child = self.children[0]
             if child.type == "NOT":
-                child.children[0].parent = self.parent
                 self.replace(child.children[0])
                 return child.children[0]
             if child.type == "TOP":
@@ -48,65 +125,103 @@ class TreeNode:
                 topNode = TreeNode("TOP", self.parent)
                 self.replace(topNode)
                 return topNode
-            if child.type == "EXISTS":
-                child.type = "FORALL"
-                child.parent = self.parent
-                self.replace(child)
-                return child
-            if child.type == "FORALL":
-                child.type = "EXISTS"
-                child.parent = self.parent
-                self.replace(child)
-                return child
-
+            
         if self.type == "AND":
-            child1 = self.children[0]
-            child2 = self.children[1]
-            if child1.type == "BOT":
-                child2.delete()
-                botNode = TreeNode("BOT", self.parent)
-                self.replace(botNode)
-                return botNode
-            
-            if child2.type == "BOT":
-                child1.delete()
-                botNode = TreeNode("BOT", self.parent)
-                self.replace(botNode)
-                return botNode
-                 
-            if child1.type == "TOP":
-                child2.parent = self.parent
-                self.replace(child2)  
-                return child2
-            
-            if child2.type == "TOP":
-                child1.parent = self.parent
-                self.replace(child1)
-                return child1
+            newChildren = []
+            for child in self.children:
+                if child.type == "BOT":
+                    # BOT AND x = BOT
+                    botNode = TreeNode("BOT", self.parent)
+                    self.replace(botNode)
+                    self.delete()
+                    return botNode
                 
-            if child1.type == "EXISTS" or child1.type == "FORALL":
-                child1.parent = self.parent
-                self.children[0] = child1.children
-                child1.children = [self]
-                self.replace(child1)
-                return child1
+                if child.type == "TOP":
+                    # TOP AND x = x
+                    # just don't add to newChildren
+                    continue
+
+                if child.type == "AND":
+                    # combine the ANDs
+                    newChildren += child.children
+                    for newChild in child.children:
+                        newChild.parent = self
+                    continue
+
+                # otherwise just keep the child
+                newChildren.append(child)
+
+            # if no children, replace with top
+            if len(newChildren) == 0:
+                topNode = TreeNode("TOP", self.parent)
+                self.replace(topNode)
+                
+                # remove variable pointers to other children
+                self.delete()
+                return topNode
             
-            if child2.type == "EXISTS" or child2.type == "FORALL":
-                child2.parent = self.parent
-                self.children[1] = child2.children
-                child2.children = [self]
-                self.replace(child2)
-                return child2
+            # if 1 child, replace with child
+            if len(newChildren) == 1:
+                self.replace(newChildren[0])
+                return newChildren[0]
+            
+            self.children = newChildren
+            return self
         
+        if self.type == "OR":
+            newChildren = []
+            for child in self.children:
+                if child.type == "TOP":
+                    # TOP OR x = TOP
+                    topNode = TreeNode("TOP", self.parent)
+
+                    self.replace(topNode)
+
+                    # remove variable pointers to other children
+                    self.delete()
+                    return topNode
+                
+                if child.type == "BOT":
+                    # BOT OR x = x
+                    # just don't add to newChildren
+                    continue
+
+                if child.type == "OR":
+                    # combine the ORs
+                    newChildren += child.children
+                    for newChild in child.children:
+                        newChild.parent = self
+                    continue
+
+                # otherwise just keep the child
+                newChildren.append(child)
+
+            # if no children, replace with bot
+            if len(newChildren) == 0:
+                botNode = TreeNode("BOT", self.parent)
+                self.replace(botNode)
+                self.delete()
+                return botNode
+            
+            # if 1 child, replace with child
+            if len(newChildren) == 1:
+                self.replace(newChildren[0])
+                return newChildren[0]
+            
+            self.children = newChildren
+            return self
+
         # LT and DIV nodes are handled by their respective classes
+            
+        return self
 
     def normalizeRec(self, replacementDict = {}):
         for child in self.children:
-            replacementDict = child.normalizeRec(replacementDict)
+            (_, replacementDict) = child.normalizeRec(replacementDict)
         
         return self.normalize(replacementDict)
 
-    def normalize(self, replacementDict):
+    def normalize(self, replacementDict = {}):
         # REPLACEMENTS
 
         if self.type == "GT":
@@ -123,7 +238,7 @@ class TreeNode:
             notNode = TreeNode("NOT", self.parent, [ltNode])
             ltNode.parent = notNode
             self.replace(notNode)
-            replacementDict = ltNode.normalize(replacementDict)
+            (_, replacementDict) = ltNode.normalize(replacementDict)
             return notNode.normalize(replacementDict)
         
         if self.type == "LTE":
@@ -133,113 +248,78 @@ class TreeNode:
             notNode = TreeNode("NOT", self.parent, [ltNode])
             ltNode.parent = notNode
             self.replace(notNode)
-            replacementDict = ltNode.normalize(replacementDict)
+            (_, replacementDict) = ltNode.normalize(replacementDict)
             return notNode.normalize(replacementDict)
         
         if self.type == "NEQ" or self.type == "EQ":
+            ltNode1 = TreeNode("LT")
             clonedChildren = []
             for child in self.children:
-                clonedChildren.append(child.clone())
-            ltNode1 = TreeNode("LT", children=self.children[::-1])
+                (childClone, _) = child.clone(ltNode1)
+                clonedChildren.append(childClone)
+            ltNode1.children = clonedChildren
+            ltNode2 = TreeNode("LT", children=self.children[::-1])
             for child in self.children:
-                child.parent = ltNode1
-            ltNode2 = TreeNode("LT", children=clonedChildren)
-            for child in ltNode2.children:
                 child.parent = ltNode2
             orNode = TreeNode("OR", children=[ltNode1, ltNode2])
             ltNode1.parent = orNode
             ltNode2.parent = orNode
             if self.type == "NEQ":
-                orNode.parent = self.parent
                 self.replace(orNode)
             else:
                 notNode = TreeNode("NOT", self.parent, [orNode])
                 orNode.parent = notNode
                 self.replace(notNode)
-            replacementDict = ltNode1.normalize(replacementDict)
-            replacementDict = ltNode2.normalize(replacementDict)
-            replacementDict = orNode.normalize(replacementDict)
+            (_, replacementDict) = ltNode1.normalize(replacementDict)
+            (_, replacementDict) = ltNode2.normalize(replacementDict)
+            (orNode, replacementDict) = orNode.normalize(replacementDict)
             if self.type == "EQ":
                 return notNode.normalize(replacementDict)
-            return replacementDict
+            return (orNode, replacementDict)
     
-        if self.type == "OR":
-            notNode1 = TreeNode("NOT", children=[self.children[0]])
-            self.children[0].parent = notNode1
-            notNode2 = TreeNode("NOT", children=[self.children[1]])
-            self.children[0].parent = notNode2
-            andNode = TreeNode("AND", children=[notNode1, notNode2])
-            notNode1.parent = andNode
-            notNode2.parent = andNode
-            notNode3 = TreeNode("NOT", self.parent, [andNode])
-            andNode.parent = notNode3
-            self.replace(notNode3)
-            replacementDict = notNode1.normalize(replacementDict)
-            replacementDict = notNode2.normalize(replacementDict)
-            replacementDict = andNode.normalize(replacementDict)
-            return notNode3.normalize(replacementDict)
-        
         if self.type == "IMP":
-            notNode = TreeNode("NOT", children=[self.children[1]])
-            self.children[1].parent = notNode
-            orNode = TreeNode("OR", self.parent, [self.children[0], notNode])
-            self.children[0].parent = orNode
+            notNode = TreeNode("NOT", children=[self.children[0]])
+            self.children[0].parent = notNode
+            orNode = TreeNode("OR", self.parent, [notNode, self.children[1]])
+            self.children[1].parent = orNode
             notNode.parent = orNode
-            self.parent.replaceChild(self. orNode)
-            replacementDict = notNode.normalize(replacementDict)
+            self.parent.replaceChild(self, orNode)
+            (_, replacementDict) = notNode.normalize(replacementDict)
             return orNode.normalize(replacementDict)
         
         if self.type == "DIMP":
+            impNode1 = TreeNode("IMP")
             clonedChildren = []
             for child in self.children:
-                clonedChildren.append(child.clone())
-            impNode1 = TreeNode("IMP", children=self.children[::-1])
+                (childClone, _) = child.clone(impNode1)
+                clonedChildren.append(childClone)
+            impNode1.children = clonedChildren
+            impNode2 = TreeNode("IMP", children=self.children[::-1])
             for child in self.children:
-                child.parent = impNode1
-            impNode2 = TreeNode("IMP", children=clonedChildren)
-            for child in clonedChildren:
                 child.parent = impNode2
             andNode = TreeNode("AND", self.parent, [impNode1, impNode2])
             impNode1.parent = andNode
             impNode2.parent = andNode
             self.replace(andNode)
-            replacementDict = impNode1.normalize(replacementDict)
-            replacementDict = impNode2.normalize(replacementDict)
+            (_, replacementDict) = impNode1.normalize(replacementDict)
+            (_, replacementDict) = impNode2.normalize(replacementDict)
             return andNode.normalize(replacementDict)
         
         # TERMS
 
         if self.type == "PLUS":
+
             child1 = self.children[0]
             child2 = self.children[1]
-            if child1.type == "INT" and child2.type == "INT":
-                intNode = IntegerNode(child1.int+child2.int, parent=self.parent)
-                self.replace(intNode)
-                return replacementDict
+            child1.add(child2)
             
-            if child1.type == "INT":
-                child2.constant += child1.int
-                child2.parent = self.parent
-                self.replace(child2)
-                return replacementDict
-            
-            child1.parent = self.parent
             self.replace(child1)
 
-            if child2.type == "INT":
-                child1.constant += child2.int
-            else:
-                child1.add(child2)
-
-            return replacementDict
+            return (child1, replacementDict)
         
         if self.type == "MIN":
             child2 = self.children[1]
-            if child2.type == "INT":
-                child2.int = -child2.int
-            else:
-                # child2.type == TERM
-                child2.negate()
+            child2.negate()
             
             plusNode = TreeNode("PLUS", self.parent, [self.children[0], child2])
             self.replace(plusNode)
@@ -247,39 +327,28 @@ class TreeNode:
         
         if self.type == "UMIN":
             child = self.children[0]
-            if child.type == "INT":
-                child.int = -child.int
-            else:
-                # child.type == TERM
-                child.negate
-            child.parent = self.parent
+            child.negate()
             self.replace(child)
-            return replacementDict
+            return (child, replacementDict)
 
         if self.type == "MUL":
             child1 = self.children[0]
             child2 = self.children[1]
-            if child1.type != "INT":
+            if not child1.isInteger():
                 raise Exception("Bad Formula - Non-Constant Multiplication")
             
-            child2.parent = self.parent
             self.replace(child2)
 
-            if child2.type == "INT":
-                child2.int *= child1.int
-            else:
-                # child2.type == TERM
-                child2.multiply(child1.int)
+            child2.multiply(child1.constant)
 
-            return replacementDict
+            return (child2, replacementDict)
         
         if self.type == "POW":
             child = self.children[0]
-            if child.type == "INT":
-                child.int = 2**abs(child.int)
-                child.parent = self.parent
+            if child.isInteger():
+                child.constant = 2**abs(child.constant)
                 self.replace(child)
-                return replacementDict
+                return (child, replacementDict)
             
             # child.type == TERM
             if child.isVariable():
@@ -287,7 +356,7 @@ class TreeNode:
                 termNode = makePower(variable, self.parent)
                 child.delete()
                 self.replace(termNode)
-                return replacementDict
+                return (termNode, replacementDict)
             
             # need to replace 2^t with 2^n for new n
             # pass the replacement up to the first non-term node (i.e. comparison or divisibility constraint)
@@ -304,61 +373,64 @@ class TreeNode:
 
             node = makePower(varObj, self.parent)
             self.replace(node)
-            return replacementDict
+            return (node, replacementDict)
 
         # replace LT and DIV nodes with their classes
         if self.type == "LT":
             child1 = self.children[0]
             child2 = self.children[1]
-            if child1.type == "INT" and child2.type == "INT":
-                if child1.int < child2.int:
-                    topNode = TreeNode("TOP", self.parent)
-                    self.replace(topNode)
-                    return replacementDict
-                botNode = TreeNode("BOT", self.parent)
-                self.replace(botNode)
-                return replacementDict
-            if child2.type == "INT":
-                # child1.type == TERM
-                child1.constant -= child2.int
-                ltNode = LTNode(parent=self.parent, children=[child1])
-                child1.parent = ltNode
-            else:
-                # child2.type == TERM
-                child2.negate()
-                if child1.type == "INT":
-                    child2.constant += child1.int
-                    ltNode = LTNode(parent=self.parent, children=[child2])
-                    child2.parent = ltNode
-                else:
-                    ltNode = LTNode(parent = self.parent, children=[child1])
-                    child1.parent = ltNode
-                    child1.add(child2)
+            child2.negate()
+            child1.add(child2)
+            ltNode = LTNode(children=[child1])
+            child1.parent = ltNode
             self.replace(ltNode)
-            ltNode.simplify()
-            return replacementDict
+            ltNode = ltNode.simplify()
+            return (ltNode, replacementDict)
         
         if self.type == "DIV":
             child1 = self.children[0]
             child2 = self.children[1]
-            assert(child1.type == "INT")
-            divNode = DivisibilityNode(child1.int, parent=self.parent, children=[child2])
+            assert(child1.isInteger)
+            divNode = DivisibilityNode(child1.constant, children=[child2])
             child2.parent = divNode
             self.replace(divNode)
-            divNode.simplify()
-            return replacementDict
+            divNode = divNode.simplify()
+            return (divNode, replacementDict)
 
-        self.simplify()
 
-        return replacementDict
+        # Boolean Operators - push quantifiers up
+        if self.type == "NOT":
+            child = self.children[0]
+            if child.type == "EXISTS":
+                child.type = "FORALL"
+                self.replace(child)
+                return (child, replacementDict)
+            if child.type == "FORALL":
+                child.type = "EXISTS"
+                self.replace(child)
+                return (child, replacementDict)
+
+    
+        if self.type == "AND" or self.type == "OR":
+            for i in range(len(self.children)):
+                child = self.children[i]
+                if child.type == "EXISTS" or child.type == "FORALL":
+                    self.children[i] = child.children[0]
+                    child.children = [self]
+                    self.replace(child)
+                    self.simplify()
+                    return (child, replacementDict)    
+
+        self = self.simplify()
+
+        return (self, replacementDict)
     
     def addReplacements(self, replacementDict):
-        if self.type == "FORALL" or self.type == "EXISTS" or self.type == "ROOT":
+        if self.type == "FORALL" or self.type == "EXISTS":
             return self.children[0].addReplacements(replacementDict)
         
         eqNodes = []
         existsNodes = []
-        
         for term in replacementDict.keys():
             varObj = replacementDict[term]
 
@@ -382,7 +454,6 @@ class TreeNode:
             return
         
         existsNode = existsNodes[0]
-        existsNode.parent = self.parent
         self.replace(existsNode)
 
         currentParent = existsNode
@@ -396,42 +467,58 @@ class TreeNode:
         andNode = TreeNode("AND", currentParent, [eqNode])
         currentParent.children = [andNode]
         eqNode.parent = andNode
-        eqNode.normalize({})
+        eqNode.normalize()
 
         for eqNode in eqNodes[1:]:
             newAnd = TreeNode("AND", andNode, [eqNode])
             andNode.children.append(newAnd)
             eqNode.parent = newAnd
-            eqNode.normalize({})
+            eqNode.normalize()
             andNode = newAnd
 
         andNode.children.append(self)
         self.parent = andNode
 
     def __repr__(self):
-        if self.type == "ROOT":
-            return str(self.children[0])
-        
         if self.children == []:
             return self.type
 
         return self.type + ": " + str(self.children)
     
 class QuantifierNode(TreeNode):
-    def __init__(self, type, variable, parent = None, children = []):
+    def __init__(self, type, variable, parent = None, children = None):
         assert(type == "EXISTS" or type == "FORALL")
         super().__init__(type, parent, children)
         self.variable = variable
 
-    def clone(self, parent, varDict = {}):
-        varObj = Variable(self.variable.ident)
+    def normalize(self, replacementDict = {}):
+        # need to define this to do nothing, so it doesn't call normalize on TreeNode
+        return (self, replacementDict)
+
+    def clone(self, parent = None, varDict = {}, varReplace = None, formReplace = None):
+        if formReplace != None:
+            # replace if equivalent to a formula here
+            for form in formReplace.keys():
+                if self.equiv(form):
+                    # replace with replacement
+                    node = formReplace[form]
+                    node.parent = parent
+                    return (node, varDict)
+        
+        varObj = self.variable.clone()
         varDict[self.variable] = varObj
         quantNode = QuantifierNode(self.type, varObj, parent)
-        childClone = self.children[0].clone(quantNode, varDict)
+        (childClone, varDict) = self.children[0].clone(quantNode, varDict, varReplace, formReplace)
         quantNode.children = [childClone]
         varObj.quant = quantNode
-        return quantNode
+        return (quantNode, varDict)
     
+    def equiv(self, otherNode):
+        if not super().equiv(otherNode):
+            return False
+        
+        return self.variable.equiv(otherNode.variable)
+
     def delete(self):
         super().delete()
         self.variable.quant = None
@@ -439,27 +526,8 @@ class QuantifierNode(TreeNode):
     def __repr__(self):
         return self.type + "-" + self.variable.ident + ":" + str(self.children)
 
-class IntegerNode(TreeNode):
-    def __init__(self, int, type = "INT", parent = None, children = []):
-        assert(children == [] and type == "INT")
-        super().__init__("INT", parent)
-        self.int = int
-
-    def clone(self, parent, varDict = {}):
-        return IntegerNode(self.int, "INT", parent, [])
-    
-    def modulus(self, divisor):
-        while (self.int < 0):
-            self.int += divisor
-
-        while (self.int >= divisor):
-            self.int -= divisor
-    
-    def __repr__(self):
-        return "INT:" + str(self.int)
-    
 class DivisibilityNode(TreeNode):
-    def __init__(self, divisor, type = "DIV", parent = None, children = []):
+    def __init__(self, divisor, type = "DIV", parent = None, children = None):
         assert(type == "DIV")
         super().__init__("DIV", parent, children)
         self.divisor = divisor
@@ -473,26 +541,78 @@ class DivisibilityNode(TreeNode):
 
         topNode = TreeNode("TOP", self.parent)
         botNode = TreeNode("BOT", self.parent)
+
+        term = self.children[0]
         if self.divisor == 1:
             term.delete()
             self.replace(topNode)
-        elif term.type == "INT":
-            if term.int % self.divisor == 0:
+            return topNode
+        
+        if term.isInteger():
+            if term.constant % self.divisor == 0:
                 self.replace(topNode)
+                return topNode
             else:
                 self.replace(botNode)
+                return botNode
 
-    def clone(self, parent, varDict = {}):
-        divNode = DivisibilityNode(self.divisor, parent=parent)
-        term = self.children[0].clone(divNode, varDict)
-        divNode.children = [term]
-        return divNode
+        return self
     
+    def normalize(self, replacementDict = {}):
+        # need to define this to do nothing, so it doesn't call normalize on TreeNode
+        return (self, replacementDict)
+
+    def clone(self, parent = None, varDict = {}, varReplace = None, formReplace = None):
+        if formReplace != None:
+            # replace if equivalent to a formula here
+            for form in formReplace.keys():
+                if self.equiv(form):
+                    # replace with replacement
+                    node = formReplace[form]
+                    node.parent = parent
+                    return (node, varDict)
+
+        divNode = DivisibilityNode(self.divisor, parent=parent)
+        (term, multiplier) = self.children[0].clone(divNode, varDict, varReplace, formReplace)
+        divNode.children = [term]
+        divNode.divisor *= multiplier
+        return (divNode, varDict)
+    
+    def equiv(self, otherNode):
+        if not super().equiv(otherNode):
+            return False
+        
+        return self.divisor == otherNode.divisor
+    
+    def getNonSimple(self):
+        if self.isSimple():
+            return []
+        
+        return [self]
+
+    def isSimple(self):
+        term = self.children[0]
+        if len(term.linearDict) + len(term.powerDict) != 1:
+            return False
+        
+        for var in term.linearDict.keys():
+            return term.linearDict[var] == 1
+            
+        for var in term.powerDict.keys():
+            return term.powerDict[var] == 1
+
+    def getLinAndMod(self):
+        maxLin = self.children[0].getMax()
+        if maxLin < 2:
+            maxLin = 2
+        mod = self.divisor
+        return (maxLin, mod)
+
     def __repr__(self):
         return str(self.divisor) + " | " + str(self.children[0])
 
 class LTNode(TreeNode):
-    def __init__(self, type = "LT", parent = None, children = []):
+    def __init__(self, type = "LT", parent = None, children = None):
         assert(type == "LT")
         super().__init__("LT", parent, children)
 
@@ -500,60 +620,199 @@ class LTNode(TreeNode):
         topNode = TreeNode("TOP", self.parent)
         botNode = TreeNode("BOT", self.parent)
         term = self.children[0]
-        if term.type == "INT":
-            if term.int < 0:
+        term.simplifyComp()
+        if term.isInteger():
+            if term.constant < 0:
                 self.replace(topNode)
+                return topNode
             else:
                 self.replace(botNode)
-        elif term.isPositive():
+                return botNode
+            
+        if term.isPositive():
             term.delete()
             self.replace(botNode)
-        elif term.isNegative():
+            return botNode
+        
+        if term.isNegative():
             term.delete()
             self.replace(topNode)
+            return topNode
+        
+    def normalize(self, replacementDict = {}):
+        # need to define this to do nothing, so it doesn't call normalize on TreeNode
+        return (self, replacementDict)
 
-    def clone(self, parent, varDict = {}):
+    def clone(self, parent = None, varDict = {}, varReplace = None, formReplace = None):
+        if formReplace != None:
+            # replace if equivalent to a formula here
+            for form in formReplace.keys():
+                if self.equiv(form):
+                    # replace with replacement
+                    node = formReplace[form]
+                    node.parent = parent
+                    return (node, varDict)
+
         ltNode = LTNode("LT", parent)
-        term = self.children[0].clone(ltNode, varDict)
+        (term, _) = self.children[0].clone(ltNode, varDict, varReplace, formReplace)
         ltNode.children = [term]
-        return ltNode
+        return (ltNode, varDict)
+
+    def getLinAndMod(self):
+        maxLin = self.children[0].getMax()
+        if maxLin < 2:
+            maxLin = 2
+        return (maxLin, 1)
+    
+    def inPowCmp(self):
+        term = self.children[0]
+        if len(term.linearDict) != 0:
+            return False
+        
+        if len(term.powerDict) > 2:
+            return False
+        
+        if len(term.powerDict) == 2 and term.constant != 0:
+            return False
+        
+        return True
     
     def __repr__(self):
         return str(self.children[0]) + " < 0"
     
 class TermNode(TreeNode):
-    def __init__(self, type = "TERM", parent = None, children = []):
-        assert(type == "TERM" and children == [])
+    def __init__(self, type = "TERM", parent = None, children = None):
+        assert(type == "TERM" and children == None)
         super().__init__(type, parent, children)
         self.linearDict = {}
         self.powerDict = {}
+        self.lambdaDict = {}
         self.constant = 0
 
-    def clone(self, parent, varDict = {}):
+    def clone(self, parent = None, varDict = {}, varReplace = None, formReplace = None):
         newTerm = TermNode("TERM", parent)
         newLinear = {}
+        termsToAdd = []
+        multiplier = 1
         for variable in self.linearDict.keys():
-            if variable in varDict.keys():
-                newLinear[varDict[variable]] = self.linearDict[variable]
-                varDict[variable].linearTerms.append(newTerm)
+            if (varReplace != None and ("linear", variable) in varReplace.keys()):
+                (replacement, mult) = varReplace[("linear", variable)]
+                termsToAdd.append((replacement, self.linearDict[variable]))
+                multiplier *= mult
             else:
-                newLinear[variable] = self.linearDict[variable]
-                variable.linearTerms.append(newTerm)
+                if variable in varDict.keys():
+                    newLinear[varDict[variable]] = self.linearDict[variable]
+                    varDict[variable].linearTerms.append(newTerm)
+                else:
+                    newLinear[variable] = self.linearDict[variable]
+                    variable.linearTerms.append(newTerm)
         newTerm.linearDict = newLinear
         
         newPower = {}
         for variable in self.powerDict.keys():
-            if variable in varDict.keys():
-                newPower[varDict[variable]] = self.powerDict[variable]
-                varDict[variable].powerTerms.append(newTerm)
+            if (varReplace != None and ("power", variable) in varReplace.keys()):
+                (replacement, mult) = varReplace[("power", variable)]
+                termsToAdd.append((replacement, self.powerDict[variable]))
+                multiplier *= mult
             else:
-                newPower[variable] = self.powerDict[variable]
-                variable.powerTerms.append(newTerm)
+                if variable in varDict.keys():
+                    newPower[varDict[variable]] = self.powerDict[variable]
+                    varDict[variable].powerTerms.append(newTerm)
+                else:
+                    newPower[variable] = self.powerDict[variable]
+                    variable.powerTerms.append(newTerm)
         newTerm.powerDict = newPower
 
-        newTerm.constant = self.constant
+        newLambda = {}
+        for sig in self.lambdaDict.keys():
+            foundRep = False
+            if varReplace != None:
+                # check if need to replace
+                for (typ, toRep) in varReplace.keys():
+                    if typ == "lambda" and sig.equiv(toRep):
+                        (replacement, mult) = varReplace[("lambda", toRep)]
+                        termsToAdd.append((replacement, self.lambdaDict[sig]))
+                        multiplier *= mult
+                        foundRep = True
+                        break
+            if not foundRep:
+                newLambda[sig] = self.lambdaDict[sig]
+        newTerm.lambdaDict = newLambda
 
-        return newTerm
+        newTerm.constant += self.constant
+
+        if multiplier != 1:
+            newTerm.multiply(multiplier)
+
+
+        for (term, mult) in termsToAdd:
+            # clone the term
+            (tClone, _) = term.clone(varDict = varDict)
+            tClone.multiply(mult)
+            newTerm.add(tClone)
+
+        return (newTerm, multiplier)
+    
+    def split(self, varList):
+        yesTerm = TermNode()
+        noTerm = TermNode()
+
+        for variable in self.linearDict.keys():
+            if variable in varList:
+                yesTerm.linearDict[variable] = self.linearDict[variable]
+            else:
+                noTerm.linearDict[variable] = self.linearDict[variable]
+
+        for variable in self.powerDict.keys():
+            if variable in varList:
+                yesTerm.powerDict[variable] = self.powerDict[variable]
+            else:
+                noTerm.powerDict[variable] = self.powerDict[variable]
+        
+        return (yesTerm, noTerm)
+    
+    def match(self, yesTerm, noTerm):
+        # PRE: yesTerm and noTerm are distinct
+
+        # check that all self's variables are in either yesTerm or noTerm, and coefficients are the same
+        for variable in self.linearDict.keys():
+            if variable in yesTerm.linearDict.keys():
+                if yesTerm.linearDict[variable] != self.linearDict[variable]:
+                    return False
+            elif variable in noTerm.linearDict.keys():
+                if noTerm.linearDict[variable] != self.linearDict[variable]:
+                    return False
+            else:
+                return False
+            
+        for variable in self.powerDict.keys():
+            if variable in yesTerm.powerDict.keys():
+                if yesTerm.powerDict[variable] != self.powerDict[variable]:
+                    return False
+            elif variable in noTerm.powerDict.keys():
+                if noTerm.powerDict[variable] != self.powerDict[variable]:
+                    return False
+            else:
+                return False
+            
+        # check that all variables in yesTerm or noTerm are in self
+        for variable in yesTerm.linearDict.keys():
+            if variable not in self.linearDict.keys():
+                return False
+            
+        for variable in noTerm.linearDict.keys():
+            if variable not in self.linearDict.keys():
+                return False
+            
+        for variable in yesTerm.powerDict.keys():
+            if variable not in self.powerDict.keys():
+                return False
+            
+        for variable in noTerm.powerDict.keys():
+            if variable not in self.powerDict.keys():
+                return False
+            
+        return True
     
     def delete(self):
         for variable in self.linearDict.keys():
@@ -568,6 +827,9 @@ class TermNode(TreeNode):
 
         for variable in self.powerDict.keys():
             self.powerDict[variable] = -self.powerDict[variable]
+
+        for sig in self.lambdaDict.keys():
+            self.lambdaDict[sig] = -self.lambdaDict[sig]
         
         self.constant = -self.constant
 
@@ -575,50 +837,54 @@ class TermNode(TreeNode):
         # remove the variables pointers to the other term
         otherTerm.delete()
 
-        for variable in otherTerm.linearDict:
+        for variable in otherTerm.linearDict.keys():
             if variable in self.linearDict.keys():
-                sum = self.linearDict[variable] + otherTerm.linearDict[variable]
-                if sum != 0:
-                    self.linearDict[variable] = sum
-                else:
-                    variable.linearTerms.remove(self)
-                    del self.linearDict[variable]
+                self.linearDict[variable] += otherTerm.linearDict[variable]
             else:
                 self.linearDict[variable] = otherTerm.linearDict[variable]
                 variable.linearTerms.append(self)
         
-        for variable in otherTerm.powerDict:
+        for variable in otherTerm.powerDict.keys():
             if variable in self.powerDict.keys():
-                sum = self.powerDict[variable] + otherTerm.powerDict[variable]
-                if sum != 0:
-                    self.powerDict[variable] = sum
-                else:
-                    variable.powerDict.remove(self)
-                    del self.powerDict[variable]
+                self.powerDict[variable] += otherTerm.powerDict[variable]
             else:
                 self.powerDict[variable] = otherTerm.powerDict[variable]
                 variable.powerTerms.append(self)
 
+        for sig in otherTerm.lambdaDict.keys():
+            if sig in self.lambdaDict.keys():
+                self.lambdaDict[sig] += otherTerm.lambdaDict[sig]
+            else:
+                self.lambdaDict[sig] = otherTerm.lambdaDict[sig]
+
         self.constant = self.constant + otherTerm.constant
 
-        if self.linearDict == {} and self.powerDict == {}:
-            # need to replace with an integer
-            integerNode = IntegerNode(self.constant, parent=self.parent)
-            self.replace(integerNode)
+        self.simplify()
 
     def multiply(self, constant):
-        if constant == 0:
-            intNode = IntegerNode(0, parent=self.parent)
-            self.delete()
-            self.replace(intNode)
-        else:
-            for variable in self.linearDict.keys():
-                self.linearDict[variable] = self.linearDict[variable]*constant
+        linearVars = list(self.linearDict.keys())
+        for variable in linearVars:
+            self.linearDict[variable] = self.linearDict[variable]*constant
+            if constant == 0:
+                variable.linearTerms.remove(self)
+                del self.linearDict[variable]
 
-            for variable in self.powerDict.keys():
-                self.powerDict[variable] = self.powerDict[variable]*constant
-            
-            self.constant *= constant
+        powerVars = list(self.powerDict.keys())
+        for variable in powerVars:
+            self.powerDict[variable] = self.powerDict[variable]*constant
+            if constant == 0:
+                variable.powerDict.remove(self)
+                del self.powerDict[variable]
+
+        lambdaSigs = list(self.lambdaDict.keys())
+        for sig in lambdaSigs:
+            self.lambdaDict[sig] = self.lambdaDict[sig]*constant
+            if constant == 0:
+                del self.lambdaSigs[variable]
+
+        self.constant *= constant
+
+        self.simplify()
 
     def modulus(self, divisor):
         for variable in self.linearDict.keys():
@@ -627,10 +893,6 @@ class TermNode(TreeNode):
 
             while self.linearDict[variable] >= divisor:
                 self.linearDict[variable] -= divisor
-            
-            if self.linearDict[variable] == 0:
-                variable.linearTerms.remove(self)
-                del self.linearDict[variable]
 
         for variable in self.powerDict.keys():
             while self.powerDict[variable] < 0:
@@ -639,9 +901,12 @@ class TermNode(TreeNode):
             while self.powerDict[variable] >= divisor:
                 self.powerDict[variable] -= divisor
 
-            if self.powerDict[variable] == 0:
-                variable.powerTerms.remove(self)
-                del self.powerDict[variable]
+        for sig in self.lambdaDict.keys():
+            while self.lambdaDict[sig] < 0:
+                self.lambdaDict[sig] += divisor
+
+            while self.lambdaDict[sig] >= divisor:
+                self.lambdaDict[sig] -= divisor
 
         while self.constant < 0:
             self.constant += divisor
@@ -649,9 +914,7 @@ class TermNode(TreeNode):
         while self.constant >= divisor:
             self.constant -= divisor
 
-        if len(self.linearDict) == 0 and len(self.powerDict) == 0:
-            intNode = IntegerNode(self.constant, parent=self.parent)
-            self.replace(intNode)
+        self.simplify()
 
     def isVariable(self):
         if len(self.linearDict) != 1:
@@ -661,7 +924,7 @@ class TermNode(TreeNode):
         if self.linearDict[variable] != 1 and self.linearDict[variable] != -1:
             return False
         
-        return len(self.powerDict) == 0 and self.constant == 0
+        return len(self.powerDict) == 0 and len(self.lambdaDict) == 0 and self.constant == 0
     
     def isPositive(self):
         if len(self.linearDict) != 0:
@@ -677,6 +940,12 @@ class TermNode(TreeNode):
                 # minimum value for the term is increased by the coefficient
                 # as 2^|x| >= 1
                 minValue += coefficient
+
+        for sig in self.lambdaDict.keys():
+            coefficient = self.lambdaDict[sig]
+            if coefficient < 0:
+                # Lambda(sig) >= 0
+                return False
 
         return minValue > 0
         
@@ -695,24 +964,172 @@ class TermNode(TreeNode):
                 # as 2^|x| >= 1
                 maxValue += coefficient
 
+        for sig in self.lambdaDict.keys():
+            coefficient = self.lambdaDict[sig]
+            if coefficient > 0:
+                # Lambda(sig) >= 0
+                return False
+
         return maxValue < 0
     
-    def equiv(self, otherTerm):
+    def isInteger(self):
+        return len(self.linearDict) == 0 and len(self.powerDict) == 0 and len(self.lambdaDict) == 0
+    
+    def simplify(self):
+        linearVars = list(self.linearDict.keys())
+        for variable in linearVars:
+            if self.linearDict[variable] == 0:
+                del self.linearDict[variable]
+                variable.linearTerms.remove(self)
+        
+        powerVars = list(self.powerDict.keys())
+        for variable in powerVars:
+            if self.powerDict[variable] == 0:
+                del self.powerDict[variable]
+                variable.powerTerms.remove(self)
+
+        lambdaSigs = list(self.lambdaDict.keys())
+        for sig in lambdaSigs:
+            if self.lambdaDict[sig] == 0:
+                del self.lambdaDict[variable]
+
+        return self
+
+    def simplifyComp(self):
+        self.simplify()
+
+        gcd = None
+
         for variable in self.linearDict.keys():
-            if variable not in otherTerm.linearDict.keys():
-                return False
-            
-            if otherTerm.linearDict[variable] != self.linearDict[variable]:
-                return False
-            
+            if gcd == None:
+                gcd = self.linearDict[variable]
+            else:
+                gcd = math.gcd(gcd, self.linearDict[variable])
+
         for variable in self.powerDict.keys():
-            if variable not in otherTerm.powerDict.keys():
-                return False
+            if gcd == None:
+                gcd = self.powerDict[variable]
+            else:
+                gcd = math.gcd(gcd, self.powerDict[variable])
+
+        for sig in self.lambdaDict.keys():
+            if gcd == None:
+                gcd = self.lambdaDict[sig]
+            else:
+                gcd = math.gcd(gcd, self.lambdaDict[sig])
+
+        if gcd != None and gcd > 1:
+            for variable in self.linearDict.keys():
+                assert(self.linearDict[variable] % gcd == 0)
+                self.linearDict[variable] = self.linearDict[variable] // gcd
             
-            if otherTerm.powerDict[variable] != self.powerDict[variable]:
-                return False
+            for variable in self.powerDict.keys():
+                assert(self.powerDict[variable] % gcd == 0)
+                self.powerDict[variable] = self.powerDict[variable] // gcd
+
+            for sig in self.lambdaDict.keys():
+                assert(self.lambdaDict[sig] % gcd == 0)
+                self.lambdaDict[sig] = self.lambdaDict[sig] // gcd
             
-        return self.constant == otherTerm.constant
+            if self.constant % gcd != 0:
+                # can round self.constant down to nearest gcd
+                self.constant -= self.constant % gcd
+            
+            assert(self.constant % gcd == 0)
+            self.constant = self.constant // gcd
+    
+    def equiv(self, otherTerm):
+        otherLinear = list(otherTerm.linearDict.keys())
+        for variable in self.linearDict.keys():
+            # find equivalent variable in otherTerm's linear variables
+            foundEquiv = False
+            for otherVariable in otherLinear:
+                if variable.equiv(otherVariable):
+                    if otherTerm.linearDict[otherVariable] != self.linearDict[variable]:
+                        return False
+                    
+                    foundEquiv = True
+                    otherLinear.remove(otherVariable)
+                    break
+
+            if not foundEquiv:
+                return False
+        # check otherTerm doesn't have extra variable
+        if len(otherLinear) != 0:
+            return False
+
+        otherPower = list(otherTerm.powerDict.keys()) 
+        for variable in self.powerDict.keys():
+            # find equivalent variable in otherTerm's power variables
+            foundEquiv = False
+            for otherVariable in otherPower:
+                if variable.equiv(otherVariable):
+                    if otherTerm.powerDict[otherVariable] != self.powerDict[variable]:
+                        return False
+                    
+                    foundEquiv = True
+                    otherPower.remove(otherVariable)
+                    break
+
+            if not foundEquiv:
+                return False
+        if len(otherPower) != 0:
+            return False
+        
+        otherSigs = list(otherTerm.lambdaDict.keys()) 
+        for sig in self.lambdaDict.keys():
+            # find equivalent term in otherTerm's lambda terms
+            foundEquiv = False
+            for otherSig in otherSigs:
+                if sig.equiv(otherSig):
+                    if otherTerm.lambdaDict[otherSig] != self.lambdaDict[sig]:
+                        return False
+                    
+                    foundEquiv = True
+                    otherSigs.remove(otherSig)
+                    break
+
+            if not foundEquiv:
+                return False
+        if len(otherSigs) != 0:
+            return False
+            
+        if self.constant != otherTerm.constant:
+            return False
+        
+        return True
+    
+    def getMax(self):
+        max = abs(self.constant)
+
+        for variable in self.linearDict.keys():
+            if abs(self.linearDict[variable]) > max:
+                max = abs(self.linearDict[variable])
+
+        for variable in self.powerDict.keys():
+            if abs(self.powerDict[variable]) > max:
+                max = abs(self.powerDict[variable])
+
+        return max
+    
+    def getSum(self):
+        sum = abs(self.constant)
+
+        for variable in self.linearDict.keys():
+            sum += abs(self.linearDict[variable])
+        
+        for variable in self.powerDict.keys():
+            sum += abs(self.powerDict[variable])
+        return sum
+    
+    def setVariablePointers(self, varList):
+        for variable in self.linearDict.keys():
+            if variable in varList:
+                variable.linearTerms.append(self)
+
+        for variable in self.powerDict.keys():
+            if variable in varList:
+                variable.powerTerms.append(self)
 
     def __repr__(self):
         linearPairs = []
@@ -727,32 +1144,116 @@ class TermNode(TreeNode):
         powerPairs = []
         for variable in self.powerDict.keys():
             if self.powerDict[variable] == 1:
-                powerPairs.append("2^(" + variable.ident + ")")
+                powerPairs.append("2^|" + variable.ident + "|")
             elif self.powerDict[variable] == -1:
-                powerPairs.append("-2^(" + variable.ident + ")")
+                powerPairs.append("-2^|" + variable.ident + "|")
             else:
-                powerPairs.append(str(self.powerDict[variable]) + ".2^(" + variable.ident + ")")
+                powerPairs.append(str(self.powerDict[variable]) + ".2^|" + variable.ident + "|")
+
+        lambdaPairs = []
+        for sig in self.lambdaDict.keys():
+            if self.lambdaDict[sig] == 1:
+                lambdaPairs.append("Lambda(" + str(sig) + ")")
+            elif self.lambdaDict[sig] == -1:
+                lambdaPairs.append("-Lambda(" + str(sig) + ")")
+            else:
+                lambdaPairs.append(str(self.lambdaDict[sig]) + ".Lambda(" + str(sig) + ")")
 
         strRep = " + ".join(linearPairs)
+
         if strRep != "" and powerPairs != []:
             strRep += " + "
         strRep += " + ".join(powerPairs)
-        if self.constant != 0:
-            strRep += " + " + str(self.constant)
 
+        if strRep != "" and lambdaPairs != []:
+            strRep += " + "
+        strRep += " + ".join(lambdaPairs)
+
+        if strRep == "":
+            return strRep + str(self.constant)
+
+        if self.constant != 0:
+            return strRep + " + " + str(self.constant)
+            
         return strRep
 
-def makeVariable(variable, parent = None):
+def makeVariable(variable, parent = None, coef = 1):
     termNode = TermNode(parent = parent)
-    termNode.linearDict[variable] = 1
+    termNode.linearDict[variable] = coef
     variable.linearTerms.append(termNode)
     return termNode
 
-def makePower(variable, parent = None):
+def makePower(variable, parent = None, coef = 1):
     termNode = TermNode(parent = parent)
-    termNode.powerDict[variable] = 1
+    termNode.powerDict[variable] = coef
     variable.powerTerms.append(termNode)
     return termNode
+
+def makeLambda(sig, parent = None, coef = 1):
+    termNode = TermNode(parent = parent)
+    termNode.lambdaDict[sig] = coef
+    return termNode
+
+def makeInteger(int, parent = None):
+    termNode = TermNode(parent = parent)
+    termNode.constant = int
+    return termNode
+
+"""
+Creates absolute value replacement
+e.g.
+    a.|x| < phi
+is replaced by
+    (NOT (x < 0) --> a.x < phi) AND
+    (x < 0 --> -a.x < phi)
+
+`posForm` is the a.x < phi in this instance
+`variable` is x in this instance
+returns the full formula, with parent node `parent`
+
+can take multiple variables to create the absolute value replacement for
+"""
+def makeAbs(variables, posForm, parent=None):
+    assert(len(variables) > 0)
+    variable = variables[0]
+    if len(variables) > 1:
+        posForm = makeAbs(variables[1:], posForm)
+
+    varReplace = {}
+    negX = makeVariable(variable, coef=-1)
+    varReplace[("linear", variable)] = (negX, 1)
+    (negForm, _) = posForm.clone(varReplace=varReplace)
+    # remove pointers to negX
+    negX.delete()
+
+    andNode = TreeNode("AND", parent)
+
+    impNode = TreeNode("IMP", andNode)
+    andNode.children.append(impNode)
+
+    notNode = TreeNode("NOT", impNode)
+    impNode.children.append(notNode)
+    ltNode = LTNode(parent=notNode)
+    notNode.children = [ltNode]
+    varNode = makeVariable(variable, ltNode)
+    ltNode.children = [varNode]
+
+    posForm.parent = impNode
+    impNode.children.append(posForm)
+
+    impNode = TreeNode("IMP", andNode)
+    andNode.children.append(impNode)
+
+    ltNode = LTNode(parent=impNode)
+    impNode.children.append(ltNode)
+    varNode = makeVariable(variable, ltNode)
+    ltNode.children = [varNode]
+
+    negForm.parent = impNode
+    impNode.children.append(negForm)
+
+    (andNode, _) = andNode.normalizeRec()
+    return andNode
 
 def convertTokenTree(tokenTree, variableDict = {}, parent = None):
     basicConversions = {
@@ -794,7 +1295,7 @@ def convertTokenTree(tokenTree, variableDict = {}, parent = None):
         raise Exception("Bad Formula - Free Variable " + ident)
     elif tokenTree.type == "INT":
         assert(tokenTree.children == [])
-        return IntegerNode(int(tokenTree.value))
+        return makeInteger(int(tokenTree.value))
     elif tokenTree.type == "-":
         assert(len(tokenTree.children) == 1 or len(tokenTree.children) == 2)
         if len(tokenTree.children) == 1:
@@ -814,22 +1315,5 @@ def convertTokenTree(tokenTree, variableDict = {}, parent = None):
         children.append(convertTokenTree(child, newVarDict, node))
 
     node.children = children
-
-    if parent == None:
-        rootNode = TreeNode("ROOT", children=[node])
-        node.parent = rootNode
-        return rootNode
     
     return node
-
-formula = "EXISTS x EXISTS y -2.POW(x) < POW(y)"
-from parsing import getTokenTree
-tokenTree = getTokenTree(formula)
-print(tokenTree)
-formulaTree = convertTokenTree(tokenTree)
-print(formulaTree)
-replacementDict = formulaTree.normalizeRec()
-print(formulaTree)
-print(replacementDict)
-formulaTree.addReplacements(replacementDict)
-print(formulaTree)
