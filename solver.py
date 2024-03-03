@@ -1,4 +1,5 @@
-from parsing import getTokenTree
+from strParsing import getTokenTree
+from smtParsing import parseSMTFile
 from formulaTree import *
 import globals
 import math, itertools
@@ -12,19 +13,30 @@ def Lambda(n):
     return 2 ** pow
 
 class Solver:
-    def __init__(self, formulaTree = None):
-        self.formulaTree = formulaTree
+    def __init__(self):
+        globals.resetIdents()
+        self.formulaTree = None
         self.addedQuants = []
         self.workList = []
         self.finishedList = [] # should be unique w.r.t. equiv
 
-    def makeFormula(self, strFormula):
+    def makeFormulaFromStr(self, strFormula):
         # reset globals
         globals.resetIdents()
 
         tokenTree = getTokenTree(strFormula)
         self.formulaTree = convertTokenTree(tokenTree)
 
+        self.normalizeFormula()
+
+    def makeFormulaFromSmt(self, smtFName):
+        # reset globals
+        globals.resetIdents()
+
+        self.formulaTree = parseSMTFile(smtFName)
+
+        self.normalizeFormula()
+    
     def normalizeFormula(self):
         (_, replacementDict) = self.formulaTree.normalizeRec()
         self.formulaTree.addReplacements(replacementDict)
@@ -86,6 +98,7 @@ class Solver:
             # initialise the work list to be the full formula and varList
             self.workList = []
             self.addToWorkList([(varList, root)])
+
             self.finishedList = []
             self.addedQuants = []
             while len(self.workList) > 0:
@@ -793,9 +806,9 @@ class Solver:
                 if not isPowCmp:
                     # variable not relevant
                     continue
+                    
 
                 # variable x s.t. 2^|x| appears and only appears in PowCmp constraints
-
                 pTerms = list(variable.powerTerms)
                 for pTerm in pTerms:
                     constraint = pTerm.parent
@@ -823,7 +836,7 @@ class Solver:
                             botNode = TreeNode("BOT")
                             constraint.replace(botNode)
                             constraint.delete()
-                            break
+                            continue
 
                         # if q' doesn't exist, replace with |x| = r'
                         if newQ == None:
@@ -844,7 +857,7 @@ class Solver:
                         absNode = makeAbs([variable], posForm)
                         constraint.replace(absNode)
                         constraint.delete()
-                        break
+                        continue
 
                     # constraint.type == "LT"
 
@@ -876,7 +889,7 @@ class Solver:
                         absNode = makeAbs([variable], posForm)
                         constraint.replace(absNode)
                         constraint.delete()
-                        break
+                        continue
                 
                     # a . 2^|x| < b . 2^|y|
                     a = pTerm.powerDict[variable]
@@ -913,6 +926,10 @@ class Solver:
                     absNode = makeAbs([y, variable], posForm)
                     constraint.replace(absNode)
                     constraint.delete()
+
+                if (variable.powerTerms != []):
+                    print("var = " + str(variable))
+                    print("root = " + str(root))
 
             root.simplifyRec()
         
@@ -995,11 +1012,3 @@ class Solver:
             newVList.append(newVar)
         
         return (newVList, varDict)
-            
-formula = "FORALL a EXISTS x EXISTS y (a == x + y)"
-solver = Solver()
-solver.makeFormula(formula)
-print(solver.formulaTree)
-solver.normalizeFormula()
-print(solver.formulaTree)
-print(solver.solve())

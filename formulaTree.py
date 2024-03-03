@@ -26,7 +26,11 @@ class TreeNode:
         node = TreeNode(self.type, parent)
         clonedChildren = []
         for child in self.children:
-            (childClone, varDict) = child.clone(node, varDict, varReplace, formReplace)
+            if child.type != "TERM":
+                (childClone, varDict) = child.clone(node, varDict, varReplace, formReplace)
+            else:
+                # terms have a different signature for clone
+                (childClone, _) = child.clone(node, varDict, varReplace, formReplace)
             clonedChildren.append(childClone)
         node.children = clonedChildren
         return (node, varDict)
@@ -334,14 +338,30 @@ class TreeNode:
         if self.type == "MUL":
             child1 = self.children[0]
             child2 = self.children[1]
-            if not child1.isInteger():
+
+            hasIntChild = False
+            intChild = 0
+
+            if child1.isInteger():
+                hasIntChild = True
+                intChild = 1
+            elif child2.isInteger():
+                hasIntChild = True
+                intChild = 2
+
+            if not hasIntChild:
                 raise Exception("Bad Formula - Non-Constant Multiplication")
             
-            self.replace(child2)
+            if intChild == 1:
+                self.replace(child2)
+                child2.multiply(child1.constant)
+                node = child2
+            else:
+                self.replace(child1)
+                child1.multiply(child2.constant)
+                node = child1
 
-            child2.multiply(child1.constant)
-
-            return (child2, replacementDict)
+            return (node, replacementDict)
         
         if self.type == "POW":
             child = self.children[0]
@@ -539,10 +559,14 @@ class DivisibilityNode(TreeNode):
         
         term.modulus(self.divisor)
 
+        gcd = term.simplifyCons(self.divisor)
+        if gcd != 1:
+            assert(self.divisor % gcd == 0)
+            self.divisor = self.divisor // gcd
+
         topNode = TreeNode("TOP", self.parent)
         botNode = TreeNode("BOT", self.parent)
 
-        term = self.children[0]
         if self.divisor == 1:
             term.delete()
             self.replace(topNode)
@@ -620,7 +644,7 @@ class LTNode(TreeNode):
         topNode = TreeNode("TOP", self.parent)
         botNode = TreeNode("BOT", self.parent)
         term = self.children[0]
-        term.simplifyComp()
+        term.simplifyCons()
         if term.isInteger():
             if term.constant < 0:
                 self.replace(topNode)
@@ -995,10 +1019,8 @@ class TermNode(TreeNode):
 
         return self
 
-    def simplifyComp(self):
-        self.simplify()
-
-        gcd = None
+    def simplifyCons(self, divisor = None):
+        gcd = divisor
 
         for variable in self.linearDict.keys():
             if gcd == None:
@@ -1018,7 +1040,20 @@ class TermNode(TreeNode):
             else:
                 gcd = math.gcd(gcd, self.lambdaDict[sig])
 
-        if gcd != None and gcd > 1:
+        if gcd == None:
+            if self.constant == 0:
+                gcd = 1
+            else:
+                gcd = self.constant
+
+        if divisor == None:
+            # can round self.constant down to nearest gcd
+            self.constant -= self.constant % gcd
+        elif self.constant != 0:
+            gcd = math.gcd(gcd, self.constant)
+
+            
+        if gcd > 1:
             for variable in self.linearDict.keys():
                 assert(self.linearDict[variable] % gcd == 0)
                 self.linearDict[variable] = self.linearDict[variable] // gcd
@@ -1031,12 +1066,10 @@ class TermNode(TreeNode):
                 assert(self.lambdaDict[sig] % gcd == 0)
                 self.lambdaDict[sig] = self.lambdaDict[sig] // gcd
             
-            if self.constant % gcd != 0:
-                # can round self.constant down to nearest gcd
-                self.constant -= self.constant % gcd
-            
             assert(self.constant % gcd == 0)
             self.constant = self.constant // gcd
+    
+        return gcd
     
     def equiv(self, otherTerm):
         otherLinear = list(otherTerm.linearDict.keys())
@@ -1285,30 +1318,28 @@ def convertTokenTree(tokenTree, variableDict = {}, parent = None):
         varObj = Variable(varIdent)
         newVarDict[varIdent] = varObj
 
-        node = QuantifierNode(tokenTree.type, varObj)
+        node = QuantifierNode(tokenTree.type, varObj, parent)
         varObj.quant = node
     elif tokenTree.type == "VAR":
         assert(tokenTree.children == [])
         ident = tokenTree.value
         if ident in variableDict.keys():
-            return makeVariable(variableDict[ident])
+            return makeVariable(variableDict[ident], parent)
         raise Exception("Bad Formula - Free Variable " + ident)
     elif tokenTree.type == "INT":
         assert(tokenTree.children == [])
-        return makeInteger(int(tokenTree.value))
+        return makeInteger(int(tokenTree.value), parent)
     elif tokenTree.type == "-":
         assert(len(tokenTree.children) == 1 or len(tokenTree.children) == 2)
         if len(tokenTree.children) == 1:
-            node = TreeNode("UMIN")
+            node = TreeNode("UMIN", parent)
         else:
-            node = TreeNode("MIN")
+            node = TreeNode("MIN", parent)
     else:
         assert(tokenTree.type in basicConversions.keys())
         (nodeType, numChildren) = basicConversions[tokenTree.type]
         assert(len(tokenTree.children) == numChildren)
-        node = TreeNode(nodeType)
-
-    node.parent = parent
+        node = TreeNode(nodeType, parent)
 
     children = []
     for child in tokenTree.children:
