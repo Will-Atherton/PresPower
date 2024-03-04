@@ -19,9 +19,8 @@ class TreeNode:
             for form in formReplace.keys():
                 if self.equiv(form):
                     # replace with replacement
-                    node = formReplace[form]
-                    node.parent = parent
-                    return (node, varDict)
+                    (repClone, _) = formReplace[form].clone(parent)
+                    return (repClone, varDict)
         
         node = TreeNode(self.type, parent)
         clonedChildren = []
@@ -521,9 +520,8 @@ class QuantifierNode(TreeNode):
             for form in formReplace.keys():
                 if self.equiv(form):
                     # replace with replacement
-                    node = formReplace[form]
-                    node.parent = parent
-                    return (node, varDict)
+                    (repClone, _) = formReplace[form].clone(parent)
+                    return (repClone, varDict)
         
         varObj = self.variable.clone()
         varDict[self.variable] = varObj
@@ -592,9 +590,8 @@ class DivisibilityNode(TreeNode):
             for form in formReplace.keys():
                 if self.equiv(form):
                     # replace with replacement
-                    node = formReplace[form]
-                    node.parent = parent
-                    return (node, varDict)
+                    (repClone, _) = formReplace[form].clone(parent)
+                    return (repClone, varDict)
 
         divNode = DivisibilityNode(self.divisor, parent=parent)
         (term, multiplier) = self.children[0].clone(divNode, varDict, varReplace, formReplace)
@@ -673,9 +670,8 @@ class LTNode(TreeNode):
             for form in formReplace.keys():
                 if self.equiv(form):
                     # replace with replacement
-                    node = formReplace[form]
-                    node.parent = parent
-                    return (node, varDict)
+                    (repClone, _) = formReplace[form].clone(parent)
+                    return (repClone, varDict)
 
         ltNode = LTNode("LT", parent)
         (term, _) = self.children[0].clone(ltNode, varDict, varReplace, formReplace)

@@ -1,12 +1,18 @@
 from pysmt.shortcuts import *
 from pysmt.operators import *
+import warnings
 from variable import Variable
 from formulaTree import *
 
 
-def parseSMTForm(smtFName):
-    form = read_smtlib(smtFName)
-    print(serialize(form))
+def parseSMTFile(smtFName, verbose = False):
+    # need to ignore warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        form = read_smtlib(smtFName)
+
+    if verbose:
+        print("formula = " + serialize(form))
 
     # assume free variables are existentially quantified at the start of the formula
     varDict = {}
@@ -87,7 +93,6 @@ def convertForm(form, variableDict = {}, parent = None):
         raise Exception("Unreachable code.")
     elif formType == "BOOL_CONSTANT":
         assert(payload != None)
-        print("payload = " + str(payload))
         if payload:
             return TreeNode("TOP", parent)
         else:
@@ -117,7 +122,6 @@ def convertForm(form, variableDict = {}, parent = None):
         assert(payload == None)
         # if a then b else c equivalent to (a -> b) and (¬a -> c)
         ifNode = convertForm(formChildren[0], newVarDict)
-        print("ifNode = " + str(ifNode)) 
         thenNode = convertForm(formChildren[1], newVarDict)
         elseNode = convertForm(formChildren[2], newVarDict)
 
@@ -160,5 +164,3 @@ def convertForm(form, variableDict = {}, parent = None):
         return nodeToReturn
     else:
         return node
-
-print(parseSMTForm("test.smt2"))

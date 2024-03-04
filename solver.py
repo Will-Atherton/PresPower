@@ -29,11 +29,11 @@ class Solver:
 
         self.normalizeFormula()
 
-    def makeFormulaFromSmt(self, smtFName):
+    def makeFormulaFromSmt(self, smtFName, verbose):
         # reset globals
         globals.resetIdents()
 
-        self.formulaTree = parseSMTFile(smtFName)
+        self.formulaTree = parseSMTFile(smtFName, verbose)
 
         self.normalizeFormula()
     
@@ -205,7 +205,6 @@ class Solver:
                 T.append((a, rest))
                 g *= a
 
-
         (maxLin, mod) = root.getLinAndMod() # gets ||lin|| and mod of phi
 
         finished = []
@@ -216,7 +215,7 @@ class Solver:
                 (t2, _) = t.clone()
                 t2.constant += k
                 (newVList, varDict) = self.cloneVariableList(vList)
-                (newForm, _) = root.clone(varDict = varDict, varReplace={("linear", variable):(t2, a)})    
+                (newForm, _) = root.clone(varDict = varDict, varReplace={("linear", variable):(t2, a)})
 
                 andNode = TreeNode("AND", children=[newForm])
                 newForm.parent = andNode
@@ -359,6 +358,8 @@ class Solver:
                         for alpha in A:
                             (aClone, _) = alpha.clone(varReplace = varReplace)
                             formReplace[alpha] = aClone
+                            # can remove pointers to aClone now (will be cloned when replacing)
+                            aClone.delete()
 
                         (gClone, _) = gamma.clone(parent=andNode, formReplace = formReplace)
                         andNode.children.append(gClone)
@@ -390,6 +391,8 @@ class Solver:
                             for alpha in A:
                                 (aClone, _) = alpha.clone(varReplace = varReplace)
                                 formReplace[alpha] = aClone
+                                # can remove pointers to aClone now (will be cloned when replacing)
+                                aClone.delete()
 
                             # remove pointers to vPow
                             vPow.delete()
@@ -449,7 +452,7 @@ class Solver:
                     andNode.children.append(gClone)
 
                     andNode = andNode.simplifyRec()
-
+ 
                     newGammax.append(andNode)
 
                     # Lambda(a).2^|x| < Lambda(sig) AND sig >= 0 AND ...
@@ -506,6 +509,8 @@ class Solver:
                     for alpha in A:
                         (aClone, _) = alpha.clone(varReplace = varReplace)
                         formReplace[alpha] = aClone
+                        # can remove pointers to aClone now (will be cloned when replacing)
+                        aClone.delete()
                         
                     (gClone, _) = gamma.clone(andNode, formReplace=formReplace)
                     andNode.children.append(gClone)
@@ -537,6 +542,8 @@ class Solver:
                     for alpha in A:
                         (aClone, _) = alpha.clone(varReplace = varReplace)
                         formReplace[alpha] = aClone
+                        # can remove pointers to aClone now (will be cloned when replacing)
+                        aClone.delete()
                         
                     (gClone, _) = gamma.clone(andNode, formReplace=formReplace)
                     andNode.children.append(gClone)
@@ -926,10 +933,6 @@ class Solver:
                     absNode = makeAbs([y, variable], posForm)
                     constraint.replace(absNode)
                     constraint.delete()
-
-                if (variable.powerTerms != []):
-                    print("var = " + str(variable))
-                    print("root = " + str(root))
 
             root.simplifyRec()
         
