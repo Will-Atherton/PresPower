@@ -1,5 +1,6 @@
 import sys
 from pyparsing import *
+from formulaTree import *
 
 ppc = pyparsing_common
 
@@ -27,6 +28,10 @@ class TokenNode:
         if self.value != None:
             strRep += "-" + str(self.value)
         return strRep + ": " + str(self.children)
+    
+def parseStr(strFormula):
+    tokenTree = getTokenTree(strFormula)
+    return convertTokenTree(tokenTree)
 
 def getTokenTree(strFormula):
     def unOpParse(t):
@@ -109,3 +114,64 @@ def getTokenTree(strFormula):
         return tokenTree[0]
     except Exception as e:
         raise Exception("Cannot Parse Formula: " + str(e))
+    
+def convertTokenTree(tokenTree, variableDict = {}, parent = None):
+    basicConversions = {
+        "POW": ("POW", 1),
+        "+": ("PLUS", 2),
+        ".": ("MUL", 2),
+        "<": ("LT", 2),
+        ">": ("GT", 2),
+        "<=": ("LTE", 2),
+        ">=": ("GTE", 2),
+        "==": ("EQ", 2),
+        "!=": ("NEQ", 2),
+        "DIV": ("DIV", 2),
+        "TOP": ("TOP", 0),
+        "BOT": ("BOT", 0),
+        "AND": ("AND", 2),
+        "OR": ("OR", 2),
+        "->": ("IMP", 2),
+        "<->": ("DIMP", 2),
+        "¬": ("NOT", 1),
+    }
+
+    newVarDict = variableDict.copy()
+
+    if tokenTree.type == "EXISTS" or tokenTree.type == "FORALL":
+        assert(len(tokenTree.children) == 1)
+        varToken = tokenTree.value
+        varIdent = varToken.value
+        varObj = Variable(varIdent)
+        newVarDict[varIdent] = varObj
+
+        node = QuantifierNode(tokenTree.type, varObj, parent)
+        varObj.quant = node
+    elif tokenTree.type == "VAR":
+        assert(tokenTree.children == [])
+        ident = tokenTree.value
+        if ident in variableDict.keys():
+            return makeVariable(variableDict[ident], parent)
+        raise Exception("Bad Formula - Free Variable " + ident)
+    elif tokenTree.type == "INT":
+        assert(tokenTree.children == [])
+        return makeInteger(int(tokenTree.value), parent)
+    elif tokenTree.type == "-":
+        assert(len(tokenTree.children) == 1 or len(tokenTree.children) == 2)
+        if len(tokenTree.children) == 1:
+            node = TreeNode("UMIN", parent)
+        else:
+            node = TreeNode("MIN", parent)
+    else:
+        assert(tokenTree.type in basicConversions.keys())
+        (nodeType, numChildren) = basicConversions[tokenTree.type]
+        assert(len(tokenTree.children) == numChildren)
+        node = TreeNode(nodeType, parent)
+
+    children = []
+    for child in tokenTree.children:
+        children.append(convertTokenTree(child, newVarDict, node))
+
+    node.children = children
+    
+    return node

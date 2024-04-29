@@ -1,5 +1,5 @@
 import argparse
-import strParsing, smtParsing, solver, test
+import solver, test
 
 def main():
     parser = argparse.ArgumentParser(
@@ -36,6 +36,7 @@ def main():
     solve = solver.Solver()
     if args.string_formula != None:
         solve.makeFormulaFromStr(args.string_formula)
+        print("form = " + str(solve.formulaTree))
     else:
         solve.makeFormulaFromSmt(args.file_name, args.verbose)
 

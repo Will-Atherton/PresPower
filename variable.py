@@ -1,10 +1,9 @@
-import globals
-
 class Variable:
     def __init__(self, ident, quant = None):
-        self.originalIdent = ident
+        #self.originalIdent = ident
         self.originalVariable = self
-        self.ident = globals.getNextIdent(ident)
+        #self.ident = globals.getNextIdent(ident)
+        self.ident = ident
         self.quant = quant
         self.linearTerms = []
         self.powerTerms = []
@@ -13,7 +12,8 @@ class Variable:
         return len(self.linearTerms) + len(self.powerTerms)
     
     def clone(self):
-        varObj = Variable(self.originalIdent, self.quant)
+        #varObj = Variable(self.originalIdent, self.quant)
+        varObj = Variable(self.ident, self.quant)
         varObj.originalVariable = self.originalVariable
         return varObj
 

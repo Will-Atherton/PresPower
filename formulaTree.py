@@ -1,5 +1,6 @@
 from variable import Variable
 import math
+from exceptions import InputException
 
 class TreeNode:
     def __init__(self, type, parent = None, children = None):
@@ -349,7 +350,7 @@ class TreeNode:
                 intChild = 2
 
             if not hasIntChild:
-                raise Exception("Bad Formula - Non-Constant Multiplication")
+                raise InputException("Bad Formula - Non-Constant Multiplication")
             
             if intChild == 1:
                 self.replace(child2)
@@ -359,7 +360,6 @@ class TreeNode:
                 self.replace(child1)
                 child1.multiply(child2.constant)
                 node = child1
-
             return (node, replacementDict)
         
         if self.type == "POW":
@@ -437,6 +437,7 @@ class TreeNode:
                     self.children[i] = child.children[0]
                     child.children = [self]
                     self.replace(child)
+                    self.parent = child
                     self.simplify()
                     return (child, replacementDict)    
 
@@ -1283,64 +1284,3 @@ def makeAbs(variables, posForm, parent=None):
 
     (andNode, _) = andNode.normalizeRec()
     return andNode
-
-def convertTokenTree(tokenTree, variableDict = {}, parent = None):
-    basicConversions = {
-        "POW": ("POW", 1),
-        "+": ("PLUS", 2),
-        ".": ("MUL", 2),
-        "<": ("LT", 2),
-        ">": ("GT", 2),
-        "<=": ("LTE", 2),
-        ">=": ("GTE", 2),
-        "==": ("EQ", 2),
-        "!=": ("NEQ", 2),
-        "DIV": ("DIV", 2),
-        "TOP": ("TOP", 0),
-        "BOT": ("BOT", 0),
-        "AND": ("AND", 2),
-        "OR": ("OR", 2),
-        "->": ("IMP", 2),
-        "<->": ("DIMP", 2),
-        "¬": ("NOT", 1),
-    }
-
-    newVarDict = variableDict.copy()
-
-    if tokenTree.type == "EXISTS" or tokenTree.type == "FORALL":
-        assert(len(tokenTree.children) == 1)
-        varToken = tokenTree.value
-        varIdent = varToken.value
-        varObj = Variable(varIdent)
-        newVarDict[varIdent] = varObj
-
-        node = QuantifierNode(tokenTree.type, varObj, parent)
-        varObj.quant = node
-    elif tokenTree.type == "VAR":
-        assert(tokenTree.children == [])
-        ident = tokenTree.value
-        if ident in variableDict.keys():
-            return makeVariable(variableDict[ident], parent)
-        raise Exception("Bad Formula - Free Variable " + ident)
-    elif tokenTree.type == "INT":
-        assert(tokenTree.children == [])
-        return makeInteger(int(tokenTree.value), parent)
-    elif tokenTree.type == "-":
-        assert(len(tokenTree.children) == 1 or len(tokenTree.children) == 2)
-        if len(tokenTree.children) == 1:
-            node = TreeNode("UMIN", parent)
-        else:
-            node = TreeNode("MIN", parent)
-    else:
-        assert(tokenTree.type in basicConversions.keys())
-        (nodeType, numChildren) = basicConversions[tokenTree.type]
-        assert(len(tokenTree.children) == numChildren)
-        node = TreeNode(nodeType, parent)
-
-    children = []
-    for child in tokenTree.children:
-        children.append(convertTokenTree(child, newVarDict, node))
-
-    node.children = children
-    
-    return node

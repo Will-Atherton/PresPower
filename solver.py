@@ -1,7 +1,6 @@
-from strParsing import getTokenTree
-from smtParsing import parseSMTFile
+from strParsing import parseStr
+from smt2Parsing import parseSMTFile
 from formulaTree import *
-import globals
 import math, itertools
 
 def Lambda(n):
@@ -14,38 +13,36 @@ def Lambda(n):
 
 class Solver:
     def __init__(self):
-        globals.resetIdents()
         self.formulaTree = None
         self.addedQuants = []
         self.workList = []
         self.finishedList = [] # should be unique w.r.t. equiv
 
     def makeFormulaFromStr(self, strFormula):
-        # reset globals
-        globals.resetIdents()
-
-        tokenTree = getTokenTree(strFormula)
-        self.formulaTree = convertTokenTree(tokenTree)
+        self.formulaTree = parseStr(strFormula)
 
         self.normalizeFormula()
 
     def makeFormulaFromSmt(self, smtFName, verbose):
-        # reset globals
-        globals.resetIdents()
-
         self.formulaTree = parseSMTFile(smtFName, verbose)
 
         self.normalizeFormula()
     
     def normalizeFormula(self):
-        (_, replacementDict) = self.formulaTree.normalizeRec()
+        (form, replacementDict) = self.formulaTree.normalizeRec()
+        self.formulaTree = form
         self.formulaTree.addReplacements(replacementDict)
     
     def solve(self):
         assert(self.formulaTree != None)
 
         lowestQuant = self.formulaTree.getLowestQuant()
-        self.SimplifyDiv(lowestQuant.children[0])
+        cover = self.SimplifyDiv(lowestQuant.children[0])
+        # make the disjunction from the cover
+        orNode = TreeNode("OR", lowestQuant, cover)
+        lowestQuant.children = [orNode]
+        for form in cover:
+            form.parent = orNode
 
         done = False
         while not done:
@@ -102,7 +99,8 @@ class Solver:
             self.finishedList = []
             self.addedQuants = []
             while len(self.workList) > 0:
-                (varList, root) = self.workList.pop(0)
+                # take from top of workList stack
+                (varList, root) = self.workList.pop()
                 if self.hasLinear(varList):
                     linearVar = self.getLinear(varList)
                     self.addToWorkList(self.PresQE(linearVar, varList, root))
@@ -142,7 +140,6 @@ class Solver:
                     upperNotNode.simplify()
 
     def addToWorkList(self, toAdd):
-        formsToAdd = []
         for (vList, form) in toAdd:
             for variable in vList.copy():
                 if variable.numVariables() == 0:
@@ -166,10 +163,19 @@ class Solver:
                     if not foundDup:
                         self.finishedList.append(form)
             else:
-                formsToAdd.append((vList, form))
+                # add new forms to the top of the workList stack - the end of the list
+                # This traverses the problem space in a DFS manner
 
-        # add new forms to the start of the workList - traverse in DFS manner
-        self.workList = formsToAdd + self.workList
+
+                # duplicate elimination
+                foundDup = False
+                for (otherVList, otherForm) in self.workList:
+                    if form.equiv(otherForm):
+                        foundDup = True
+                        break
+                
+                if not foundDup:
+                    self.workList.append((vList, form))
 
     def hasLinear(self, vList):
         for var in vList:
@@ -229,16 +235,10 @@ class Solver:
 
                 newForm = newForm.simplifyRec()
                 
-                newForm = self.SimplifyDiv(newForm)
+                cover = self.SimplifyDiv(newForm)
 
-                if newForm.type == "TOP":
-                    # short-circuit
-                    return [([], newForm)]
-
-                if newForm.type != "BOT":
-                    finished.append((newVList, newForm))
-
-                # if newForm.type == "BOT", no need to add it in
+                for finishedForm in cover:
+                    finished.append((newVList, finishedForm))
 
                 # remove t2
                 t2.delete()
@@ -251,7 +251,6 @@ class Solver:
 
         return finished
 
-        
 
     def SemCover(self, vList, root):
         # find the terms with powers for each of the variables beforehand
@@ -591,10 +590,19 @@ class Solver:
                     # remove pointers to gamma
                     gamma.delete()
 
-                # Remove BOT nodes from Gammax
+                # Remove BOT nodes and duplicates from Gammax
                 Gammax = []
                 for form in newGammax:
-                    if form.type != "BOT":
+                    if form.type == "BOT":
+                        continue
+
+                    foundDup = False
+                    for otherForm in Gammax:
+                        if form.equiv(otherForm):
+                            foundDup = True
+                            break
+                    
+                    if not foundDup:
                         Gammax.append(form)
             
             # add the terms in Gammax to Gamma
@@ -943,7 +951,7 @@ class Solver:
         G = root.getNonSimple()
         if G == []:
             # no need to do anything
-            return root
+            return [root]
 
         lcm = 1
         for div in G:
@@ -969,15 +977,13 @@ class Solver:
         
         replacementList = list(itertools.product(*singleReplacementLists))
 
-        # disjunction of the cover
-        orNode = TreeNode("OR")
+        cover = [] # should be unique w.r.t. equiv
 
         for replacementTuple in replacementList:
             replacementDict = {}
 
             # conjunction of divisibility nodes and replaced formula
-            andNode = TreeNode("AND", orNode)
-            orNode.children.append(andNode)
+            andNode = TreeNode("AND")
 
             for varTuple in list(replacementTuple):
                 (tup, rep) = varTuple
@@ -999,12 +1005,24 @@ class Solver:
             (replacedFormula, _) = root.clone(andNode, varReplace=replacementDict)
             andNode.children.append(replacedFormula)
 
-        orNode = orNode.simplifyRec()
+            andNode = andNode.simplifyRec()
 
-        root.replace(orNode)
+            # duplicate elimination
+            # don't add if the node is BOT
+            if andNode.type == "BOT":
+                continue
+
+            foundDup = False
+            for form in cover:
+                if andNode.equiv(form):
+                    foundDup = True
+                    break
+            
+            if not foundDup:
+                cover.append(andNode)
+
         root.delete()
-
-        return orNode
+        return cover
 
     def cloneVariableList(self, vList):
         varDict = {}

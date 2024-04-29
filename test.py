@@ -16,7 +16,7 @@ def runTest(formLoc, formType, correctRes, verbose):
     if correctRes == None and verbose:
         print("Result Unknown.")
 
-    # CPU time including initial parsing and normalization
+    # CPU time
     t1 = time.process_time()
 
     if formType == "str":
@@ -28,33 +28,38 @@ def runTest(formLoc, formType, correctRes, verbose):
         fName = formLoc
         solve.makeFormulaFromSmt(fName, verbose)
 
-    # CPU time excluding initial parsing and normalization
-    t2 = time.process_time()
-
     res = solve.solve()
 
-    t3 = time.process_time()
+    t2 = time.process_time()
+    timeTaken = t2 - t1
 
     if correctRes != None and res != correctRes:
         raise TestException("Incorrect result, wanted: " + resConvert(correctRes) + ", got: " + resConvert(res))
     
     if verbose:
         print("result: " + resConvert(res))
-        print("time taken, including initial parsing: " + str(t3 - t1))
-        print("time taken, excluding initial parsing: " + str(t3 - t2))
+        print("time taken: " + str(timeTaken) + "s")
+    
+    return  timeTaken
 
 def runTests(tests, verbose):
     assert(tests == "all" or tests == "examples" or tests == "tests")
     if tests == "all" or tests == "examples":
         print("Running examples")
+        totalTime = 0
         for (strForm, expected) in examples:
-            runTest(strForm, "str", expected, verbose)
+            totalTime += runTest(strForm, "str", expected, verbose)
+
+    if verbose:
+        print("Total time taken for examples: " + str(totalTime) + "s")
     
     if tests == "all" or tests == "tests":
         print("Running tests")
         testFiles = []
         for f in os.listdir(os.getcwd() + "/tests/"):
             testFiles.append(f)
+
+        totalTime = 0
 
         for fName in testFiles:
             fName = "tests/" + fName
@@ -63,6 +68,8 @@ def runTests(tests, verbose):
             correctRes = None
             f = open(fName, "r")
             firstLine = f.readline()
+            f.close()
+
             if firstLine[0] == ";":
                 # first line is a comment
                 if "unsat" in firstLine:
@@ -75,9 +82,11 @@ def runTests(tests, verbose):
             if verbose:
                 print("running file: " + fName)
 
-            runTest(fName, "smt2", correctRes, verbose)
+            totalTime += runTest(fName, "smt2", correctRes, verbose)
 
-    print("All tests successful.")
+        print("All tests successful.")
+        if verbose:
+            print("Total time taken for tests: " + totalTime + "s")
 
 examples = []
 
